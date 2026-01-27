@@ -68,10 +68,12 @@ show_main_menu() {
     echo "   LEMP Stack Installer & Manager"
     echo "======================================"
     echo ""
-    echo "1) Install LEMP Stack"
-    echo "2) Uninstall Components"
-    echo "3) Check Installation Status"
-    echo "4) Exit"
+    echo "1) Install Full LEMP Stack"
+    echo "2) Install Specific Components"
+    echo "3) Uninstall Components"
+    echo "4) Check Installation Status"
+    echo "5) Create Nginx Domain Config"
+    echo "6) Exit"
     echo ""
 }
 
@@ -120,9 +122,9 @@ install_nginx() {
         return 0
     fi
     
-    print_info "Installing Nginx..."
-    sudo apt install nginx -y
-    print_success "Nginx installed successfully!"
+    print_info "Installing Nginx and Certbot plugin..."
+    sudo apt install nginx python3-certbot-nginx -y
+    print_success "Nginx and Certbot plugin installed successfully!"
 }
 
 # Function to install MySQL
@@ -328,6 +330,59 @@ install_lemp() {
     read -p "Press Enter to continue..."
 }
 
+# Function to show installation submenu for individual components
+show_install_submenu() {
+    while true; do
+        clear
+        echo "======================================"
+        echo "   Install Specific Components"
+        echo "======================================"
+        echo ""
+        echo "1) Install Nginx"
+        echo "2) Install MySQL"
+        echo "3) Install PHP"
+        echo "4) Install Composer"
+        echo "5) Back to Main Menu"
+        echo ""
+
+        read -p "Select an option (1-5): " choice
+
+        case $choice in
+            1)
+                sudo apt update
+                install_nginx
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            2)
+                sudo apt update
+                install_mysql
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            3)
+                sudo apt update
+                install_php
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            4)
+                sudo apt update
+                install_composer
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            5)
+                break
+                ;;
+            *)
+                print_error "Invalid option. Please try again."
+                sleep 2
+                ;;
+        esac
+    done
+}
+
 # Function to uninstall Nginx
 uninstall_nginx() {
     if ! is_nginx_installed; then
@@ -506,6 +561,118 @@ show_uninstall_menu() {
     done
 }
 
+# Function to create Nginx configuration for a domain
+create_nginx_config() {
+    clear
+    echo "======================================"
+    echo "   Create Nginx Domain Config"
+    echo "======================================"
+    echo ""
+
+    if ! is_nginx_installed; then
+        print_error "Nginx is not installed. Please install it first."
+        read -p "Press Enter to continue..."
+        return
+    fi
+
+    # Domain Name
+    read -p "Enter domain name (e.g., example.com): " DOMAIN_NAME
+    if [ -z "$DOMAIN_NAME" ]; then
+        print_error "Domain name cannot be empty."
+        read -p "Press Enter to continue..."
+        return
+    fi
+
+    # Root Directory
+    DEFAULT_ROOT="/var/www/$DOMAIN_NAME/public"
+    read -p "Enter root directory [$DEFAULT_ROOT]: " ROOT_DIR
+    ROOT_DIR=${ROOT_DIR:-$DEFAULT_ROOT}
+
+    # PHP Version
+    local php_versions=$(get_installed_php_versions)
+    if [ -n "$php_versions" ]; then
+        echo ""
+        echo "Detected PHP versions: $php_versions"
+        read -p "Enter PHP version to use (e.g., 8.2): " SELECTED_PHP
+        if [ -z "$SELECTED_PHP" ]; then
+            SELECTED_PHP=$(echo "$php_versions" | awk '{print $1}')
+            print_info "No version entered, using $SELECTED_PHP"
+        fi
+    else
+        read -p "No PHP detected. Enter PHP version manually (e.g., 8.1): " SELECTED_PHP
+        if [ -z "$SELECTED_PHP" ]; then
+            SELECTED_PHP="8.1"
+        fi
+    fi
+
+    # Create directory if it doesn't exist
+    print_info "Creating directory $ROOT_DIR..."
+    sudo mkdir -p "$ROOT_DIR"
+    sudo chown -R $USER:$USER "$(dirname "$ROOT_DIR")"
+
+    # Create Nginx Config
+    CONFIG_FILE="/etc/nginx/sites-available/$DOMAIN_NAME"
+    print_info "Creating Nginx configuration file at $CONFIG_FILE..."
+
+    sudo tee "$CONFIG_FILE" > /dev/null <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN_NAME;
+    root $ROOT_DIR;
+
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-Content-Type-Options "nosniff";
+
+    index index.php;
+
+    charset utf-8;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt  { access_log off; log_not_found off; }
+
+    error_page 404 /index.php;
+
+    location ~ \.php$ {
+        fastcgi_pass unix:/var/run/php/php${SELECTED_PHP}-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+        include fastcgi_params;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}
+EOF
+
+    # Enable path
+    print_info "Enabling configuration..."
+    sudo ln -sf "$CONFIG_FILE" "/etc/nginx/sites-enabled/"
+
+    # Test and reload
+    if sudo nginx -t; then
+        print_info "Reloading Nginx..."
+        sudo systemctl reload nginx
+        print_success "Nginx configuration created and enabled successfully!"
+        echo ""
+        print_info "Domain: $DOMAIN_NAME"
+        print_info "Root: $ROOT_DIR"
+        print_info "PHP: $SELECTED_PHP"
+        print_info "Config file: $CONFIG_FILE"
+        echo ""
+        print_info "You can now run 'sudo certbot --nginx -d $DOMAIN_NAME' to get an SSL certificate."
+    else
+        print_error "Nginx configuration test failed. Please check the config file."
+    fi
+
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
 # Main program loop
 main() {
     # Check if running on Ubuntu/Debian
@@ -538,19 +705,25 @@ main() {
     
     while true; do
         show_main_menu
-        read -p "Select an option (1-4): " choice
+        read -p "Select an option (1-6): " choice
         
         case $choice in
             1)
                 install_lemp
                 ;;
             2)
-                show_uninstall_menu
+                show_install_submenu
                 ;;
             3)
-                check_installation_status
+                show_uninstall_menu
                 ;;
             4)
+                check_installation_status
+                ;;
+            5)
+                create_nginx_config
+                ;;
+            6)
                 print_info "Goodbye!"
                 exit 0
                 ;;
