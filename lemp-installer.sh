@@ -345,41 +345,62 @@ show_install_submenu() {
         echo "5) Back to Main Menu"
         echo ""
 
-        read -p "Select an option (1-5): " choice
+        read -p "Select options (e.g., 1,2,4 or 5 to back): " input
 
-        case $choice in
-            1)
-                sudo apt update
-                install_nginx
+        if [[ -z "$input" ]]; then
+            print_error "Input cannot be empty."
+            sleep 2
+            continue
+        fi
+
+        # Extract options into an array
+        IFS=',' read -ra choices <<< "$input"
+        
+        # Validation pass
+        local valid=true
+        local selected_components=()
+        local back_selected=false
+
+        for choice in "${choices[@]}"; do
+            # Trim whitespace
+            choice=$(echo "$choice" | xargs)
+            
+            if [[ "$choice" =~ ^[1-4]$ ]]; then
+                selected_components+=("$choice")
+            elif [[ "$choice" == "5" ]]; then
+                back_selected=true
+            else
+                print_error "Invalid option: '$choice'. Valid options are 1, 2, 3, 4, or 5."
+                valid=false
+            fi
+        done
+
+        if [ "$valid" = false ]; then
+            sleep 2
+            continue
+        fi
+
+        # Process selections
+        if [ ${#selected_components[@]} -gt 0 ]; then
+            print_info "Updating package lists..."
+            sudo apt update
+            
+            for component in "${selected_components[@]}"; do
+                case $component in
+                    1) install_nginx ;;
+                    2) install_mysql ;;
+                    3) install_php ;;
+                    4) install_composer ;;
+                esac
                 echo ""
-                read -p "Press Enter to continue..."
-                ;;
-            2)
-                sudo apt update
-                install_mysql
-                echo ""
-                read -p "Press Enter to continue..."
-                ;;
-            3)
-                sudo apt update
-                install_php
-                echo ""
-                read -p "Press Enter to continue..."
-                ;;
-            4)
-                sudo apt update
-                install_composer
-                echo ""
-                read -p "Press Enter to continue..."
-                ;;
-            5)
-                break
-                ;;
-            *)
-                print_error "Invalid option. Please try again."
-                sleep 2
-                ;;
-        esac
+            done
+            print_success "Selected components installation process completed."
+            read -p "Press Enter to continue..."
+        fi
+
+        if [ "$back_selected" = true ]; then
+            break
+        fi
     done
 }
 
