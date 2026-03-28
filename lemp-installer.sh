@@ -711,11 +711,30 @@ main() {
     
     print_info "Detected: $PRETTY_NAME"
     
-    # Check if running as root or with sudo
+    # Check if running as root
     if [ "$EUID" -eq 0 ]; then
-        print_error "Please do not run this script as root. Use your regular user account."
-        print_info "The script will prompt for sudo password when needed."
-        exit 1
+        print_warning "============================================"
+        print_warning "  WARNING: Running as root user!"
+        print_warning "============================================"
+        echo ""
+        print_warning "You are about to run this script as root."
+        print_warning "This is potentially dangerous and should only be done if you know what you're doing."
+        echo ""
+        print_warning "Running as root will:"
+        print_warning "  - Skip sudo password prompts"
+        print_warning "  - Execute all commands with full system privileges"
+        print_warning "  - Allow direct modification of system files"
+        print_warning "  - Bypass user-level permission checks"
+        echo ""
+        print_warning "If you're not absolutely certain, press Ctrl+C now to cancel."
+        echo ""
+        read -p "Type 'y' to continue: " confirm
+        
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            print_info "Cancelled."
+            exit 0
+        fi
+        echo ""
     fi
     
     # Check if sudo is available
