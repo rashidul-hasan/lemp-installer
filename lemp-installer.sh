@@ -133,57 +133,99 @@ install_mysql() {
         print_warning "MySQL is already installed. Skipping..."
         return 0
     fi
-    
+
     print_info "Installing MySQL..."
     sudo apt install mysql-server -y
-    
-    # Prompt for MySQL configuration
+
     echo ""
     print_info "MySQL Configuration"
     read -p "Enter MySQL root username: " MYSQL_ROOT_USER
     read -sp "Enter MySQL root password: " MYSQL_ROOT_PASSWORD
     echo ""
-    
-    # Run mysql_secure_installation steps
+
     print_info "Securing MySQL installation..."
-    
-    sudo mysql <<EOF
-    -- Create a new user with root privileges
-    CREATE USER IF NOT EXISTS '$MYSQL_ROOT_USER'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASSWORD';
-    GRANT ALL PRIVILEGES ON *.* TO '$MYSQL_ROOT_USER'@'localhost' WITH GRANT OPTION;
-    FLUSH PRIVILEGES;
-    -- Remove root user
-    DELETE FROM mysql.user WHERE User='root' AND Host='localhost';
-    -- Remove anonymous users
-    DELETE FROM mysql.user WHERE User='';
-    -- Disallow root login remotely
-    DELETE FROM mysql.user WHERE User='$MYSQL_ROOT_USER' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
-    -- Remove test database and access to it
-    DROP DATABASE IF EXISTS test;
-    DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-    -- Reload privilege tables
-    FLUSH PRIVILEGES;
+
+    # Detect Ubuntu version
+    UBUNTU_VERSION=$(lsb_release -rs)
+    UBUNTU_MAJOR=$(echo "$UBUNTU_VERSION" | cut -d'.' -f1)
+
+    if [[ "$UBUNTU_MAJOR" -ge 24 ]]; then
+        # Ubuntu 24.04+ — MySQL 8.0+ defaults to caching_sha2_password,
+        # must explicitly set mysql_native_password for broad compatibility
+        print_info "Detected Ubuntu 24.04+, applying compatible MySQL auth configuration..."
+
+        sudo mysql <<EOF
+-- Create new admin user with explicit native password auth
+CREATE USER IF NOT EXISTS '${MYSQL_ROOT_USER}'@'localhost'
+    IDENTIFIED WITH mysql_native_password BY '${MYSQL_ROOT_PASSWORD}';
+GRANT ALL PRIVILEGES ON *.* TO '${MYSQL_ROOT_USER}'@'localhost' WITH GRANT OPTION;
+
+-- Alter root to use native password (keep as system fallback)
+ALTER USER 'root'@'localhost'
+    IDENTIFIED WITH mysql_native_password BY '${MYSQL_ROOT_PASSWORD}';
+
+-- Remove anonymous users
+DELETE FROM mysql.user WHERE User='';
+
+-- Disallow remote root login
+DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+
+-- Remove test database
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db LIKE 'test\_%';
+
+FLUSH PRIVILEGES;
 EOF
-    
+
+    else
+        # Ubuntu < 24.04 — original logic works fine
+        print_info "Detected Ubuntu ${UBUNTU_VERSION}, applying standard MySQL configuration..."
+
+        sudo mysql <<EOF
+-- Create a new user with root privileges
+CREATE USER IF NOT EXISTS '$MYSQL_ROOT_USER'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASSWORD';
+GRANT ALL PRIVILEGES ON *.* TO '$MYSQL_ROOT_USER'@'localhost' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+-- Remove root user
+DELETE FROM mysql.user WHERE User='root' AND Host='localhost';
+-- Remove anonymous users
+DELETE FROM mysql.user WHERE User='';
+-- Disallow root login remotely
+DELETE FROM mysql.user WHERE User='$MYSQL_ROOT_USER' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+-- Remove test database and access to it
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\_%';
+-- Reload privilege tables
+FLUSH PRIVILEGES;
+EOF
+
+    fi
+
     print_success "MySQL secured successfully!"
-    
+
+    # Verify login works before proceeding
+    if ! mysql --user="${MYSQL_ROOT_USER}" --password="${MYSQL_ROOT_PASSWORD}" -e "SELECT 1;" &>/dev/null; then
+        print_error "Login verification failed! Check your credentials."
+        return 1
+    fi
+    print_success "Login verified successfully."
+
     # Ask if user wants to create databases
     echo ""
     read -p "Do you want to create databases now? (y/n): " create_dbs
     if [[ "$create_dbs" =~ ^[Yy]$ ]]; then
         read -p "Enter database names (comma-separated, e.g., db1,db2): " MYSQL_DATABASES
-        
+
         if [ -n "$MYSQL_DATABASES" ]; then
             IFS=',' read -r -a DB_ARRAY <<< "$MYSQL_DATABASES"
             for DB_NAME in "${DB_ARRAY[@]}"; do
-                # Trim whitespace
                 DB_NAME=$(echo "$DB_NAME" | xargs)
-                mysql --user="$MYSQL_ROOT_USER" --password="$MYSQL_ROOT_PASSWORD" <<EOF
-                CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;
-                GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$MYSQL_ROOT_USER'@'localhost';
-                FLUSH PRIVILEGES;
+                mysql --user="${MYSQL_ROOT_USER}" --password="${MYSQL_ROOT_PASSWORD}" <<EOF
+CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`;
+GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${MYSQL_ROOT_USER}'@'localhost';
+FLUSH PRIVILEGES;
 EOF
-                print_success "Database '$DB_NAME' created and privileges granted."
+                print_success "Database '${DB_NAME}' created and privileges granted."
             done
         fi
     fi
