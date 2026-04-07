@@ -56,7 +56,8 @@ Simply run the script and follow the interactive prompts:
 3. **Uninstall Components** - Remove specific components or entire stack
 4. **Check Installation Status** - View what's currently installed
 5. **Create Nginx Domain Config** - Setup a new domain with a Laravel-optimized Nginx config
-6. **Exit** - Close the script
+6. **Setup a Laravel Project** - Configure an existing Laravel project
+7. **Exit** - Close the script
 
 ### Installing LEMP Stack
 
@@ -127,6 +128,19 @@ When creating a new domain configuration, the script will:
 - Enable the configuration and reload Nginx
 - Provide the command to get an SSL certificate via Certbot
 
+### Setup a Laravel Project
+
+When configuring an existing, cloned Laravel project, the script will systematically guide you through its preparation:
+
+- **Validation:** Prompt for the absolute path to your project and verify it contains the `artisan` console file.
+- **Dependencies:** Run `composer install` to install project dependencies.
+- **Environment:** Safely copy `.env.example` to `.env` and walk through interactively injecting your custom database credentials.
+- **Database Provisioning:** Test connection credentials and automatically construct the project database if it does not already exist.
+- **Bootstrapping:** Run `php artisan key:generate`.
+- **Permissions:** Adjust group ownership to `www-data` and apply writable permissions to various `/storage`, `/bootstrap/cache`, and `/public` directories.
+- **Migrations & Seeders:** Prompt configuration choices to safely migrate and seed development data.
+- **Web App Linking:** Offer the ability to launch an Nginx config file targeting the `public` directory, deploy it instantly, and optionally apply Certbot SSL natively to the new domain.
+
 ## What Gets Installed
 
 | Component           | Package                          |
@@ -150,7 +164,8 @@ When creating a new domain configuration, the script will:
 3) Uninstall Components
 4) Check Installation Status
 5) Create Nginx Domain Config
-6) Exit
+6) Setup a Laravel Project
+7) Exit
 ```
 
 ### Installation Status

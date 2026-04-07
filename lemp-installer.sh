@@ -73,7 +73,8 @@ show_main_menu() {
     echo "3) Uninstall Components"
     echo "4) Check Installation Status"
     echo "5) Create Nginx Domain Config"
-    echo "6) Exit"
+    echo "6) Setup a Laravel Project"
+    echo "7) Exit"
     echo ""
 }
 
@@ -736,6 +737,544 @@ EOF
     read -p "Press Enter to continue..."
 }
 
+# Function to setup a Laravel project
+setup_laravel_project() {
+    clear
+    echo "======================================"
+    echo "   Setup a Laravel Project"
+    echo "======================================"
+    echo ""
+
+    read -p "Enter the absolute path where the Laravel project is cloned (e.g., /var/www/myproject): " PROJECT_PATH
+    
+    if [ ! -d "$PROJECT_PATH" ]; then
+        print_error "Directory does not exist: $PROJECT_PATH"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    cd "$PROJECT_PATH" || return
+
+    # Check if we're in a Laravel project
+    if [ ! -f "artisan" ]; then
+        print_error "Error: artisan file not found. Are you in a Laravel project directory?"
+        read -p "Press Enter to continue..."
+        return
+    fi
+
+    # Step 0: Install dependencies via Composer
+    print_info "Checking for Composer..."
+    if ! command -v composer &> /dev/null; then
+        print_error "Composer is not installed. Please install Composer and try again."
+        read -p "Press Enter to continue..."
+        return
+    fi
+
+    print_info "Running composer install..."
+    composer install --no-interaction --prefer-dist
+    if [ $? -eq 0 ]; then
+        print_success "Composer dependencies installed successfully"
+    else
+        print_error "Composer install failed!"
+        read -p "Press Enter to continue..."
+        return
+    fi
+
+    echo ""
+
+    # Step 1: Create .env file from .env.example if it doesn't exist
+    if [ ! -f ".env" ]; then
+        if [ -f ".env.example" ]; then
+            print_info "Creating .env file from .env.example..."
+            cp .env.example .env
+            print_success ".env file created"
+        else
+            print_error ".env.example file not found!"
+            read -p "Press Enter to continue..."
+            return
+        fi
+    else
+        print_warning ".env file already exists, skipping creation"
+    fi
+
+    echo ""
+
+    # Step 2: Get database credentials interactively
+    print_info "Database Configuration"
+    echo "========================================"
+
+    read -p "Enter DB_CONNECTION [mysql]: " DB_CONNECTION
+    DB_CONNECTION=${DB_CONNECTION:-mysql}
+
+    read -p "Enter DB_HOST [127.0.0.1]: " DB_HOST
+    DB_HOST=${DB_HOST:-127.0.0.1}
+
+    read -p "Enter DB_PORT [3306]: " DB_PORT
+    DB_PORT=${DB_PORT:-3306}
+
+    read -p "Enter DB_DATABASE [laravel]: " DB_DATABASE
+    DB_DATABASE=${DB_DATABASE:-laravel}
+
+    read -p "Enter DB_USERNAME [root]: " DB_USERNAME
+    DB_USERNAME=${DB_USERNAME:-root}
+
+    read -sp "Enter DB_PASSWORD (hidden) []: " DB_PASSWORD
+    DB_PASSWORD=${DB_PASSWORD:-}
+
+    echo ""
+    print_info "The database name you provided will be created automatically if it doesn't exist."
+    echo ""
+    print_info "Updating .env file with database credentials..."
+
+    # Detect OS for sed compatibility
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        SED_INPLACE="sed -i .bak"
+    else
+        # Linux
+        SED_INPLACE="sed -i"
+    fi
+
+    # Update .env file with database credentials
+    $SED_INPLACE "s/^DB_CONNECTION=.*/DB_CONNECTION=${DB_CONNECTION}/" .env
+    $SED_INPLACE "s/^DB_HOST=.*/DB_HOST=${DB_HOST}/" .env
+    $SED_INPLACE "s/^DB_PORT=.*/DB_PORT=${DB_PORT}/" .env
+    $SED_INPLACE "s/^DB_DATABASE=.*/DB_DATABASE=${DB_DATABASE}/" .env
+    $SED_INPLACE "s/^DB_USERNAME=.*/DB_USERNAME=${DB_USERNAME}/" .env
+
+    # Handle DB_PASSWORD separately as it might contain special characters
+    if grep -q "^DB_PASSWORD=" .env; then
+        $SED_INPLACE "s|^DB_PASSWORD=.*|DB_PASSWORD=${DB_PASSWORD}|" .env
+    else
+        echo "DB_PASSWORD=${DB_PASSWORD}" >> .env
+    fi
+
+    # Set APP_DEBUG=false
+    if grep -q "^APP_DEBUG=" .env; then
+        $SED_INPLACE "s|^APP_DEBUG=.*|APP_DEBUG=false|" .env
+    else
+        echo "APP_DEBUG=false" >> .env
+    fi
+
+    # Set APP_ENV=production
+    if grep -q "^APP_ENV=" .env; then
+        $SED_INPLACE "s|^APP_ENV=.*|APP_ENV=production|" .env
+    else
+        echo "APP_ENV=production" >> .env
+    fi
+
+    # Remove backup file if on macOS
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        rm -f .env.bak
+    fi
+
+    print_success "Database credentials updated in .env file"
+    echo ""
+
+    # Step 2.5: Create database if it doesn't exist
+    print_info "Checking if database '$DB_DATABASE' exists..."
+    if mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USERNAME" -p"$DB_PASSWORD" -e "SHOW DATABASES LIKE '$DB_DATABASE';" | grep -q "$DB_DATABASE"; then
+        print_success "Database '$DB_DATABASE' already exists"
+    else
+        print_info "Creating database '$DB_DATABASE'..."
+        if mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USERNAME" -p"$DB_PASSWORD" -e "CREATE DATABASE $DB_DATABASE CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"; then
+            print_success "Database '$DB_DATABASE' created successfully"
+        else
+            print_error "Failed to create database '$DB_DATABASE'. Please check your MySQL credentials and permissions."
+            read -p "Press Enter to continue..."
+            return
+        fi
+    fi
+    echo ""
+
+    # Step 3: Generate application key
+    print_info "Generating application key..."
+    php artisan key:generate --ansi
+    print_success "Application key generated"
+    echo ""
+
+    # Step 4: Setup directories and permissions
+    print_info "Setting up directories and permissions..."
+    echo ""
+
+    DIRECTORIES=(
+        "storage"
+        "storage/app"
+        "storage/app/public"
+        "storage/framework"
+        "storage/framework/cache"
+        "storage/framework/sessions"
+        "storage/framework/views"
+        "storage/logs"
+        "bootstrap/cache"
+        "public/uploads"
+        "resources/views/_cache"
+        "_business"
+    )
+
+    # Loop through each directory and apply the required actions
+    for DIR in "${DIRECTORIES[@]}"; do
+        # Create the directory if it doesn't exist
+        if [ ! -d "$DIR" ]; then
+            echo "Creating directory: $DIR"
+            mkdir -p "$DIR"
+        fi
+        
+        # Change the ownership to www-data (check if running as root/sudo)
+        if [ "$EUID" -eq 0 ]; then
+            echo "Changing ownership of $DIR to www-data"
+            chown -R www-data:www-data "$DIR"
+        else
+            print_warning "Not running as root/sudo, skipping ownership change for $DIR"
+        fi
+        
+        # Change permissions to make it writable
+        echo "Setting writable permissions on $DIR"
+        chmod -R 775 "$DIR"
+    done
+
+    print_success "Directories created and permissions set"
+    echo ""
+
+    # Step 5: Ask about migrations
+    print_warning "Database Migration Options"
+    echo "========================================"
+    read -p "Do you want to run migrations? (y/n) [y]: " RUN_MIGRATE
+    RUN_MIGRATE=${RUN_MIGRATE:-y}
+
+    if [[ "$RUN_MIGRATE" =~ ^[Yy]$ ]]; then
+        echo ""
+        print_warning "⚠️  WARNING: Using 'migrate:fresh' will DROP ALL TABLES and reset your database!"
+        read -p "Do you want to use 'migrate:fresh' (resets all data)? (y/n) [n]: " USE_FRESH
+        USE_FRESH=${USE_FRESH:-n}
+        
+        echo ""
+        if [[ "$USE_FRESH" =~ ^[Yy]$ ]]; then
+            print_info "Running migrate:fresh..."
+            php artisan migrate:fresh --force
+            print_success "Database reset and migrations completed"
+        else
+            print_info "Running migrate..."
+            php artisan migrate --force
+            print_success "Migrations completed"
+        fi
+        
+        echo ""
+        # Step 6: Ask about seeding
+        read -p "Do you want to run database seeders? (y/n) [n]: " RUN_SEED
+        RUN_SEED=${RUN_SEED:-n}
+        
+        if [[ "$RUN_SEED" =~ ^[Yy]$ ]]; then
+            echo ""
+            print_info "Running database seeders..."
+            php artisan db:seed --force
+            print_success "Database seeding completed"
+        else
+            print_info "Skipping database seeding"
+        fi
+    else
+        print_info "Skipping migrations"
+    fi
+
+    echo ""
+
+    # Step 7: Ask about nginx configuration
+    print_info "Nginx Configuration"
+    echo "========================================"
+    read -p "Do you want to create an nginx configuration file? (y/n) [n]: " CREATE_NGINX
+    CREATE_NGINX=${CREATE_NGINX:-n}
+
+    if [[ "$CREATE_NGINX" =~ ^[Yy]$ ]]; then
+        echo ""
+        read -p "Enter domain name (e.g., example.com): " DOMAIN_NAME
+        
+        # Set GODMODE_DOMAIN in .env file
+        if [ -n "$DOMAIN_NAME" ]; then
+            print_info "Setting GODMODE_DOMAIN=$DOMAIN_NAME in .env file..."
+            # Detect OS for sed compatibility
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                # macOS
+                SED_INPLACE="sed -i .bak"
+            else
+                # Linux
+                SED_INPLACE="sed -i"
+            fi
+            
+            if grep -q "^GODMODE_DOMAIN=" .env; then
+                $SED_INPLACE "s|^GODMODE_DOMAIN=.*|GODMODE_DOMAIN=${DOMAIN_NAME}|" .env
+            else
+                echo "GODMODE_DOMAIN=${DOMAIN_NAME}" >> .env
+            fi
+            
+            # Remove backup file if on macOS
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                rm -f .env.bak
+            fi
+            
+            print_success "GODMODE_DOMAIN set to $DOMAIN_NAME"
+        fi
+        echo ""
+        
+        if [ -z "$DOMAIN_NAME" ]; then
+            print_error "Domain name is required!"
+        else
+            read -p "Enter project root path [$(pwd)/public]: " PROJECT_ROOT
+            PROJECT_ROOT=${PROJECT_ROOT:-$(pwd)}
+            
+            read -p "Enter PHP version (e.g., 8.2, 8.1, 8.3) [8.2]: " PHP_VERSION
+            PHP_VERSION=${PHP_VERSION:-8.2}
+            
+            NGINX_CONFIG_FILE="${DOMAIN_NAME}.conf"
+            
+            print_info "Creating nginx configuration file: $NGINX_CONFIG_FILE"
+            
+            cat > "$NGINX_CONFIG_FILE" << EOF
+server {
+    server_name ${DOMAIN_NAME} www.${DOMAIN_NAME} *.${DOMAIN_NAME};
+    root ${PROJECT_ROOT}/public;
+
+    client_max_body_size 128m;
+
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff";
+
+    index index.php;
+
+    charset utf-8;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt  { access_log off; log_not_found off; }
+
+    error_page 404 /index.php;
+
+    location ~ \.php\$ {
+        fastcgi_pass unix:/var/run/php/php${PHP_VERSION}-fpm.sock;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+        fastcgi_param PHP_VALUE "upload_max_filesize=128M \n post_max_size=128M";
+        include fastcgi_params;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+
+    listen 80;
+    # Uncomment the lines below after setting up SSL with Certbot
+    # listen 443 ssl;
+    # ssl_certificate /etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/${DOMAIN_NAME}/privkey.pem;
+    # include /etc/letsencrypt/options-ssl-nginx.conf;
+    # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+EOF
+            
+            print_success "Nginx configuration file created: $NGINX_CONFIG_FILE"
+            echo ""
+            
+            # Ask if user wants to deploy the nginx config automatically
+            read -p "Do you want to deploy this nginx configuration now? (requires sudo) (y/n) [y]: " DEPLOY_NGINX
+            DEPLOY_NGINX=${DEPLOY_NGINX:-y}
+            
+            if [[ "$DEPLOY_NGINX" =~ ^[Yy]$ ]]; then
+                echo ""
+                print_info "Deploying nginx configuration..."
+                
+                # Check if nginx is installed
+                if ! command -v nginx &> /dev/null; then
+                    print_error "Nginx is not installed. Please install nginx first."
+                else
+                    # Copy config to sites-available
+                    print_info "Copying config to /etc/nginx/sites-available/..."
+                    if sudo cp "$NGINX_CONFIG_FILE" /etc/nginx/sites-available/; then
+                        print_success "Config copied to sites-available"
+                    else
+                        print_error "Failed to copy config. Do you have sudo privileges?"
+                        read -p "Press Enter to continue..."
+                        return
+                    fi
+                    
+                    # Create symlink to sites-enabled
+                    print_info "Creating symlink in sites-enabled..."
+                    if [ -L "/etc/nginx/sites-enabled/$NGINX_CONFIG_FILE" ]; then
+                        print_warning "Symlink already exists, removing old one..."
+                        sudo rm "/etc/nginx/sites-enabled/$NGINX_CONFIG_FILE"
+                    fi
+                    
+                    if sudo ln -s "/etc/nginx/sites-available/$NGINX_CONFIG_FILE" /etc/nginx/sites-enabled/; then
+                        print_success "Symlink created in sites-enabled"
+                    else
+                        print_error "Failed to create symlink"
+                        read -p "Press Enter to continue..."
+                        return
+                    fi
+                    
+                    # Test nginx configuration
+                    print_info "Testing nginx configuration..."
+                    if sudo nginx -t; then
+                        print_success "Nginx configuration test passed"
+                        
+                        # Reload nginx
+                        print_info "Reloading nginx..."
+                        if sudo systemctl reload nginx; then
+                            print_success "Nginx reloaded successfully"
+                            echo ""
+                            print_success "Nginx configuration deployed and active!"
+                        else
+                            print_error "Failed to reload nginx"
+                            read -p "Press Enter to continue..."
+                            return
+                        fi
+                    else
+                        print_error "Nginx configuration test failed. Please check the configuration."
+                        read -p "Press Enter to continue..."
+                        return
+                    fi
+                fi
+                
+                echo ""
+                print_info "Optional: Setup SSL with Certbot:"
+                echo "  sudo certbot --nginx -d ${DOMAIN_NAME} -d www.${DOMAIN_NAME}"
+                echo ""
+            else
+                print_info "Nginx configuration saved as: $NGINX_CONFIG_FILE"
+                echo ""
+                print_info "To deploy manually later, run:"
+                echo "  sudo cp $NGINX_CONFIG_FILE /etc/nginx/sites-available/"
+                echo "  sudo ln -s /etc/nginx/sites-available/$NGINX_CONFIG_FILE /etc/nginx/sites-enabled/"
+                echo "  sudo nginx -t"
+                echo "  sudo systemctl reload nginx"
+                echo ""
+            fi
+
+            # Step 7.5: SSL Configuration
+            print_info "SSL Configuration"
+            echo "========================================"
+            read -p "Do you want to configure SSL with Certbot now? (y/n) [n]: " CONFIG_SSL
+            CONFIG_SSL=${CONFIG_SSL:-n}
+
+            if [[ "$CONFIG_SSL" =~ ^[Yy]$ ]]; then
+                echo ""
+                # Verify if Nginx config exists in /etc/nginx before proceeding
+                NGINX_PATH="/etc/nginx/sites-available/${DOMAIN_NAME}.conf"
+                
+                if [ ! -f "$NGINX_PATH" ]; then
+                    print_error "Nginx configuration for $DOMAIN_NAME not found in /etc/nginx/sites-available/."
+                    print_error "Please deploy the Nginx configuration first (run Step 7 with 'y' for deployment)."
+                else
+                    print_info "Checking for Certbot..."
+                    if ! command -v certbot &> /dev/null; then
+                        print_info "Certbot not found. Installing Certbot and Nginx plugin..."
+                        if [ "$EUID" -eq 0 ]; then
+                            apt update && apt install -y certbot python3-certbot-nginx
+                        else
+                            sudo apt update && sudo apt install -y certbot python3-certbot-nginx
+                        fi
+                        print_success "Certbot installed successfully"
+                    else
+                        print_success "Certbot is already installed"
+                    fi
+
+                    echo ""
+                    echo "Select SSL Certificate type:"
+                    echo "1) Standard (domain.com, www.domain.com)"
+                    echo "2) Wildcard (*.domain.com) - Requires manual DNS TXT record"
+                    read -p "Enter choice [1]: " SSL_TYPE
+                    SSL_TYPE=${SSL_TYPE:-1}
+
+                    if [ "$SSL_TYPE" == "1" ]; then
+                        print_info "Fetching Standard SSL certificate..."
+                        
+                        # Ask to include www subdomain
+                        CERTBOT_DOMAINS="-d ${DOMAIN_NAME}"
+                        if [[ ! "${DOMAIN_NAME}" =~ ^www\. ]]; then
+                            read -p "Also include 'www.${DOMAIN_NAME}' subdomain? (y/n) [y]: " INCLUDE_WWW
+                            INCLUDE_WWW=${INCLUDE_WWW:-y}
+                            if [[ "$INCLUDE_WWW" =~ ^[Yy]$ ]]; then
+                                CERTBOT_DOMAINS="${CERTBOT_DOMAINS} -d www.${DOMAIN_NAME}"
+                            fi
+                        fi
+                        
+                        if sudo certbot --nginx ${CERTBOT_DOMAINS}; then
+                            print_success "SSL certificate installed successfully"
+                        else
+                            echo ""
+                            print_error "Failed to install SSL certificate."
+                            print_warning "Possible reasons:"
+                            print_warning "1. Domain DNS does not yet point to this server's IP."
+                            print_warning "2. Subdomain 'www' not defined in DNS (try again without www)."
+                            print_warning "3. Ports 80 or 443 are blocked by a firewall."
+                            echo ""
+                        fi
+                    elif [ "$SSL_TYPE" == "2" ]; then
+                        print_info "Fetching Wildcard SSL certificate (DNS manual challenge)..."
+                        print_warning "Follow the instructions below to add TXT records to your DNS provider."
+                        
+                        if sudo certbot certonly --manual --preferred-challenges dns -d "${DOMAIN_NAME}" -d "*.${DOMAIN_NAME}"; then
+                            print_success "Wildcard SSL certificate fetched successfully"
+                            
+                            # Uncomment SSL lines in Nginx config
+                            print_info "Updating Nginx configuration to enable SSL..."
+                            
+                            # Detect OS for sed compatibility
+                            if [[ "$OSTYPE" == "darwin"* ]]; then
+                                # macOS (for local testing script, though this usually runs on Linux)
+                                SED_SSL="sed -i .bak"
+                            else
+                                # Linux
+                                SED_SSL="sed -i"
+                            fi
+                            
+                            sudo $SED_SSL 's/# listen 443 ssl;/listen 443 ssl;/' "$NGINX_PATH"
+                            sudo $SED_SSL 's|# ssl_certificate /etc/letsencrypt/|ssl_certificate /etc/letsencrypt/|' "$NGINX_PATH"
+                            sudo $SED_SSL 's|# ssl_certificate_key /etc/letsencrypt/|ssl_certificate_key /etc/letsencrypt/|' "$NGINX_PATH"
+                            sudo $SED_SSL 's|# include /etc/letsencrypt/options-ssl-nginx.conf;|include /etc/letsencrypt/options-ssl-nginx.conf;|' "$NGINX_PATH"
+                            sudo $SED_SSL 's|# ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;|ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;|' "$NGINX_PATH"
+                            
+                            # Remove backup file if on macOS
+                            if [[ "$OSTYPE" == "darwin"* ]]; then
+                                sudo rm -f "${NGINX_PATH}.bak"
+                            fi
+                            
+                            print_info "Testing and reloading Nginx..."
+                            if sudo nginx -t && sudo systemctl reload nginx; then
+                                print_success "SSL enabled and Nginx reloaded"
+                            else
+                                print_error "Failed to reload Nginx. Please check $NGINX_PATH manually."
+                            fi
+                        else
+                            print_error "Failed to fetch Wildcard SSL certificate"
+                        fi
+                    else
+                        print_error "Invalid choice. Skipping SSL configuration."
+                    fi
+                fi
+            fi
+        fi
+    else
+        print_info "Skipping nginx configuration"
+    fi
+
+    echo ""
+    echo "========================================"
+    print_success "Laravel setup completed successfully!"
+    echo "========================================"
+    echo ""
+    print_info "General next steps:"
+    echo "  • Start your development server: php artisan serve"
+    echo "  • Review your .env file for any additional configuration"
+    if [[ ! "$CREATE_NGINX" =~ ^[Yy]$ ]]; then
+        echo "  • Configure your web server to point to the 'public' directory"
+    fi
+    echo ""
+    read -p "Press Enter to return to main menu..."
+}
+
 # Main program loop
 main() {
     # Check if running on Ubuntu/Debian
@@ -787,7 +1326,7 @@ main() {
     
     while true; do
         show_main_menu
-        read -p "Select an option (1-6): " choice
+        read -p "Select an option (1-7): " choice
         
         case $choice in
             1)
@@ -806,6 +1345,9 @@ main() {
                 create_nginx_config
                 ;;
             6)
+                setup_laravel_project
+                ;;
+            7)
                 print_info "Goodbye!"
                 exit 0
                 ;;
