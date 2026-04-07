@@ -771,13 +771,10 @@ setup_laravel_project() {
     fi
 
     print_info "Running composer install..."
-    composer install --no-interaction --prefer-dist
-    if [ $? -eq 0 ]; then
+    if composer install --no-interaction --prefer-dist; then
         print_success "Composer dependencies installed successfully"
     else
-        print_error "Composer install failed!"
-        read -p "Press Enter to continue..."
-        return
+        print_error "Composer install encountered errors (possibly in post-install scripts). Carrying on..."
     fi
 
     echo ""
